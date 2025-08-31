@@ -3,126 +3,129 @@ from __future__ import annotations
 import platform
 import statistics
 import subprocess
-from typing import Dict, List
+import socket
+import time
+from typing import Dict, List, Optional
 
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
-def _ping_once(host: str) -> float:
+def _ping_once(host: str, timeout_s: int = 3) -> Optional[float]:
     system = platform.system().lower()
     if system == "windows":
-        # Use Windows ping command with longer timeout and larger packet
-        cmd = ["ping", "-n", "1", "-w", "10000", "-l", "32", host]
+        cmd = ["ping", "-n", "1", "-w", str(int(timeout_s * 1000)), host]
     else:
-        cmd = ["ping", "-c", "1", "-W", "5", host]
+        cmd = ["ping", "-c", "1", "-W", str(max(1, int(timeout_s))), host]
 
-    logger.debug(f"Running ping command: {' '.join(cmd)}")
-    
     try:
-        # Don't use shell=True to avoid command interpretation issues
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15, shell=False)
-        logger.debug(f"Ping return code: {proc.returncode}")
-        logger.debug(f"Ping stdout: {repr(proc.stdout)}")
-        logger.debug(f"Ping stderr: {repr(proc.stderr)}")
-        
-        if proc.returncode != 0:
-            # Log more details about the failure
-            error_msg = f"Ping failed with return code {proc.returncode}"
-            if proc.stderr:
-                error_msg += f", stderr: {proc.stderr.strip()}"
-            if proc.stdout:
-                error_msg += f", stdout: {proc.stdout.strip()}"
-            raise RuntimeError(error_msg)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Ping command timed out")
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s + 2, shell=False)
     except FileNotFoundError:
-        raise RuntimeError("Ping command not found - check if ping is available in PATH")
-    
-    output = proc.stdout
-    logger.debug(f"Ping output: {output}")
+        logger.debug("ping not found on system")
+        return None
+    except subprocess.TimeoutExpired:
+        return None
 
-    # Parse ping output
+    out = proc.stdout or ""
+    if proc.returncode != 0 and not out:
+        return None
+
+    # parse time=...ms
     import re
-    if system == "windows":
-        # Windows ping output patterns
-        patterns = [
-            r'time[<=](\d+(?:\.\d+)?)ms',  # time=32ms or time<1ms
-            r'Average\s*=\s*(\d+(?:\.\d+)?)ms',  # Average = 32ms
-            r'(\d+(?:\.\d+)?)ms',  # Just 32ms
-            r'Reply.*time[<=](\d+(?:\.\d+)?)ms'  # Reply from ... time=32ms
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, output, re.IGNORECASE)
-            if match:
-                latency = float(match.group(1))
-                logger.debug(f"Parsed Windows ping latency: {latency}ms")
-                return latency
-        
-        # Handle sub-millisecond responses
-        if "time<1ms" in output.lower() or "<1ms" in output.lower():
-            logger.debug("Parsed Windows ping latency: <1ms, using 0.5ms")
-            return 0.5
-    else:
-        # Linux/Unix ping output
-        match = re.search(r'time=(\d+(?:\.\d+)?)\s*ms', output)
-        if match:
-            latency = float(match.group(1))
-            logger.debug(f"Parsed Unix ping latency: {latency}ms")
-            return latency
-
-    # Fallback parsing - look for any millisecond values
-    matches = re.findall(r'(\d+(?:\.\d+)?)\s*ms', output, re.IGNORECASE)
-    if matches:
-        # Return the first reasonable latency value
-        for match in matches:
-            value = float(match)
-            if 0.1 <= value <= 2000:  # Reasonable ping range
-                logger.debug(f"Parsed latency: {value}ms from output")
-                return value
-
-    # Log full output for debugging
-    logger.error(f"Unable to parse ping output: {repr(output)}")
-    raise RuntimeError(f"Unable to parse ping output from: {output[:200]}...")
-
-
-
-def sample_latency_and_jitter(host: str, samples: int = 10) -> Dict[str, float]:
-    latencies: List[float] = []
-    failed_samples = 0
-    
-    logger.info(f"Starting latency measurement to {host} with {samples} samples")
-    
-    for i in range(samples):
+    m = re.search(r"time[=<]\s*(\d+(?:\.\d+)?)\s*ms", out, re.IGNORECASE)
+    if m:
         try:
-            # Try ICMP ping first
-            latency = _ping_once(host)
-            latencies.append(latency)
-            logger.debug(f"Sample {i+1}: {latency:.2f}ms")
-        except Exception as exc:
-            failed_samples += 1
-            logger.warning(f"Ping sample {i+1} failed: {exc}")
-            # Continue with remaining samples
+            return float(m.group(1))
+        except Exception:
+            return None
 
-    if not latencies:
-        raise RuntimeError(f"All {samples} ping samples failed")
-    
-    if failed_samples > 0:
-        logger.warning(f"{failed_samples}/{samples} ping samples failed")
+    # fallback any ms value
+    ms = re.findall(r"(\d+(?:\.\d+)?)\s*ms", out, re.IGNORECASE)
+    for val in ms:
+        try:
+            f = float(val)
+            if 0.01 <= f <= 10000:
+                return f
+        except Exception:
+            continue
+    return None
 
-    # Calculate statistics
-    avg_latency = statistics.mean(latencies)
-    
-    # Calculate jitter as standard deviation of latencies
-    if len(latencies) > 1:
-        jitter = statistics.stdev(latencies)  # Use sample standard deviation
-    else:
-        jitter = 0.0
-    
-    # Log individual samples for debugging
-    logger.info(f"Latency samples: {[f'{l:.1f}' for l in latencies]} ms")
-    logger.info(f"Results - Latency: {avg_latency:.2f} ms | Jitter: {jitter:.2f} ms | Success: {len(latencies)}/{samples}")
-    
-    return {"latency_ms": round(avg_latency, 2), "jitter_ms": round(jitter, 2)}
+def _tcp_connect_once(host: str, port: int = 443, timeout_s: float = 2.0) -> Optional[float]:
+    try:
+        start = time.perf_counter()
+        sock = socket.create_connection((host, port), timeout=timeout_s)
+        sock.close()
+        return (time.perf_counter() - start) * 1000.0
+    except Exception:
+        return None
+
+def sample_latency_and_jitter(host: str, samples: int = 8, base_timeout: int = 1) -> Dict[str, Optional[float]]:
+    """
+    Attempts ICMP first. If all ICMP samples fail, falls back to TCP connect probes (port 443).
+    Always returns:
+      { "latency_ms": float|None, "jitter_ms": float|None, "packet_loss_pct": float, "samples": int, "failed": int, "method": "ICMP"|"TCP"|"NONE" }
+    """
+    logger.info("Starting latency measurement to %s with %d samples", host, samples)
+
+    # Try ICMP to host
+    icmp_samples: List[float] = []
+    failed = 0
+    for i in range(samples):
+        val = _ping_once(host, timeout_s=base_timeout)
+        if val is not None:
+            icmp_samples.append(val)
+        else:
+            failed += 1
+        time.sleep(0.12)
+
+    if icmp_samples:
+        loss = round(100.0 * (failed / samples), 2)
+        mean = round(statistics.mean(icmp_samples), 2)
+        jitter = round(statistics.stdev(icmp_samples) if len(icmp_samples) > 1 else 0.0, 2)
+        return {
+            "latency_ms": mean,
+            "jitter_ms": jitter,
+            "packet_loss_pct": loss,
+            "samples": samples,
+            "failed": failed,
+            "method": "ICMP",
+        }
+
+    # If ICMP entirely failed: try fallback targets (public resolvers) on TCP
+    fallback_hosts = [host, "1.1.1.1", "8.8.8.8"]
+    tcp_samples: List[float] = []
+    used_host = None
+    for fh in fallback_hosts:
+        tcp_samples.clear()
+        failed_tcp = 0
+        for i in range(samples):
+            val = _tcp_connect_once(fh, port=443, timeout_s=base_timeout)
+            if val is not None:
+                tcp_samples.append(val)
+            else:
+                failed_tcp += 1
+            time.sleep(0.12)
+        if tcp_samples:
+            used_host = fh
+            loss = round(100.0 * (failed_tcp / samples), 2)
+            mean = round(statistics.mean(tcp_samples), 2)
+            jitter = round(statistics.stdev(tcp_samples) if len(tcp_samples) > 1 else 0.0, 2)
+            return {
+                "latency_ms": mean,
+                "jitter_ms": jitter,
+                "packet_loss_pct": loss,
+                "samples": samples,
+                "failed": failed_tcp,
+                "method": "TCP",
+                "probe_host": used_host,
+            }
+
+    # Nothing worked
+    return {
+        "latency_ms": -1,
+        "jitter_ms": -1,
+        "packet_loss_pct": 100.0,
+        "samples": samples,
+        "failed": samples,
+        "method": "NONE",
+    }

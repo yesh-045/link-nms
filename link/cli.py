@@ -25,6 +25,9 @@ def run_once() -> None:
     init_db(cfg.database_path)
     speed = run_speed_test(timeout=cfg.speed_timeout)
     lat = sample_latency_and_jitter(cfg.ping_target, cfg.ping_samples)
+    if lat["latency_ms"] == None:
+        typer.secho("Error: latency check failed", err=True, fg=typer.colors.RED)
+        raise typer.Exit(code=1)
     row_id = insert_result(
         cfg.database_path,
         download_mbps=speed["download_mbps"],
