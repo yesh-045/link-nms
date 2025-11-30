@@ -4,7 +4,7 @@ from typing import Dict
 
 from speedtest import Speedtest
 
-from ..utils.logger import get_logger
+from .logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -13,8 +13,11 @@ def run_speed_test(timeout: int = 30) -> Dict[str, float]:
     """Run internet speed test with timeout"""
     logger.info(f"Starting speed test with {timeout}s timeout")
     
-    st = Speedtest()
-    st.timeout = timeout
+    try:
+        st = Speedtest(timeout=timeout)
+    except Exception as e:
+        logger.error(f"Failed to initialize speed test: {e}")
+        return {"download_mbps": 0.0, "upload_mbps": 0.0}
     
     try:
         logger.debug("Getting server list...")
@@ -47,4 +50,4 @@ def run_speed_test(timeout: int = 30) -> Dict[str, float]:
         
     except Exception as e:
         logger.error(f"Speed test failed: {e}")
-        raise RuntimeError(f"Speed test failed: {e}")
+        return {"download_mbps": 0.0, "upload_mbps": 0.0}

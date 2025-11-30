@@ -7,10 +7,10 @@ from typing import Callable, Optional
 import schedule
 
 from .config import load_config
-from .engines.latency_engine import sample_latency_and_jitter
-from .engines.speed_engine import run_speed_test
-from .storage.db import init_db, insert_result
-from .utils.logger import get_logger
+from .latency import sample_latency_and_jitter
+from .speed import run_speed_test
+from .database import init_db, insert_result
+from .logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -1,74 +1,34 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import List, Optional
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import List
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from ..analysis.health_score import HealthInputs, compute_health
+from ..health import HealthInputs, compute_health
 from ..config import load_config
-from ..storage.db import fetch_averages, fetch_latest, fetch_since_days, init_db
-from ..utils.logger import get_logger
+from ..database import fetch_averages, fetch_latest, fetch_since_days, init_db
+from ..logger import get_logger
+
+logger = get_logger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown logic."""
+    cfg = load_config()
+    init_db(cfg.database_path)
+    logger.info("LINK API started and database initialized")
+    yield
 
 app = FastAPI(
     title="LINK Network Health API",
     description="Simple network performance monitoring and health scoring",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
-
-# CORS for frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-logger = get_logger(__name__)
-
-# Pydantic models
-class NetworkMetrics(BaseModel):
-    id: int
-    timestamp: str
-    download_mbps: float
-    upload_mbps: float
-    latency_ms: float
-    jitter_ms: float
-
-class HealthScoreRequest(BaseModel):
-    profile: str = "default"
-
-class HealthScoreResponse(BaseModel):
-    score: float
-    status: str
-    profile: str
-    components: dict
-    explanations: List[dict]
-    insights: List[str]
-    timestamp: str
-
-class StatsResponse(BaseModel):
-    days: int
-    avg_download_mbps: float
-    avg_upload_mbps: float
-    avg_latency_ms: float
-    avg_jitter_ms: float
-
-class TrendData(BaseModel):
-    labels: List[str]
-    download: List[float]
-    upload: List[float]
-    latency: List[float]
-    jitter: List[float]
-
-@app.on_event("startup")
-async def startup_event():
-    cfg = load_config()
-    init_db(cfg.database_path)
-    logger.info("LINK API started and database initialized")
 
 @app.get("/")
 async def root():

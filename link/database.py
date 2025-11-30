@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterator, List, Optional, Tuple
 
-from ..utils.time_utils import now_utc
+from .time_utils import now_utc
 
 
 @dataclass
