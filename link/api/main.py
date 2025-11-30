@@ -15,6 +15,39 @@ from ..logger import get_logger
 
 logger = get_logger(__name__)
 
+# --- Pydantic Models ---
+
+class NetworkMetrics(BaseModel):
+    id: int
+    timestamp: str
+    download_mbps: float
+    upload_mbps: float
+    latency_ms: float
+    jitter_ms: float
+
+class HealthScoreResponse(BaseModel):
+    score: float
+    status: str
+    profile: str
+    components: dict
+    explanations: List[dict]
+    insights: List[str]
+    timestamp: str
+
+class StatsResponse(BaseModel):
+    days: int
+    avg_download_mbps: float
+    avg_upload_mbps: float
+    avg_latency_ms: float
+    avg_jitter_ms: float
+
+class TrendData(BaseModel):
+    labels: List[str]
+    download: List[float]
+    upload: List[float]
+    latency: List[float]
+    jitter: List[float]
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown logic."""
@@ -28,6 +61,14 @@ app = FastAPI(
     description="Simple network performance monitoring and health scoring",
     version="1.0.0",
     lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.get("/")
@@ -170,7 +211,7 @@ async def get_trends(days: int = Query(7, description="Number of days for trend 
 @app.get("/api/profiles")
 async def get_profiles():
     """Get network health scoring weights"""
-    from ..analysis.health_score import WEIGHTS
+    from ..health import WEIGHTS
     
     return {
         "weights": WEIGHTS,

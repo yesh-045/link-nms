@@ -28,13 +28,13 @@ export function NetworkHealthTimeline({ data }: NetworkHealthTimelineProps) {
     // Categorize health status
     let status = 'poor'
     let statusColor = '#ef4444'
-    if (overallHealth >= 80) {
+    if (overallHealth >= 70) {
       status = 'excellent'
       statusColor = '#10b981'
-    } else if (overallHealth >= 60) {
+    } else if (overallHealth >= 50) {
       status = 'good'
       statusColor = '#3b82f6'
-    } else if (overallHealth >= 40) {
+    } else if (overallHealth >= 30) {
       status = 'fair'
       statusColor = '#f59e0b'
     }
